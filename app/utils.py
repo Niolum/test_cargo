@@ -1,4 +1,8 @@
 from datetime import date
+from iso8601.iso8601 import ParseError
+
+from fastapi import HTTPException, status
+from tortoise.exceptions import DoesNotExist
 
 from app.models import (
     Cargo, 
@@ -26,3 +30,23 @@ async def get_rate(date: date, rate: float):
 
 async def get_rate_by_cargo_id(date: date, cargo_type_id: int):
     return await Rate_Pydantic.from_queryset_single(Rate.get(date=date, cargo_type_id=cargo_type_id))
+
+async def create_object_from_dict(tariff: dict):
+    try:
+        for key, values in tariff.items():
+            for value in values:
+                try:
+                    cargo = await get_cargo(value["cargo_type"])
+                except DoesNotExist:
+                    cargoIn = CargoIn_Pydantic(cargo_type=value["cargo_type"])
+                    cargo = await create_cargo(cargo=cargoIn)
+                try:
+                    rate = await get_rate(date=key, rate=value["rate"])
+                except DoesNotExist:
+                    rate = RateIn_Pydantic(date=key, rate=value["rate"])
+                    await create_rate(rate=rate, cargo_id=cargo.id)
+    except (TypeError, KeyError, ParseError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The json data is incorrect"
+        )
