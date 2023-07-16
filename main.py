@@ -1,45 +1,35 @@
 import json
-from iso8601.iso8601 import ParseError
 from datetime import date
 
-from fastapi import FastAPI, UploadFile, HTTPException, status, File
+from fastapi import FastAPI, UploadFile, HTTPException, status, File, Request
+from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
 from tortoise.contrib.fastapi import register_tortoise
 from tortoise.exceptions import DoesNotExist
 
 from app.database import TORTOISE_ORM
-from app.models import CargoIn_Pydantic, RateIn_Pydantic
+from app.schemas import Tariff
 from app.utils import (
-    create_cargo, 
-    create_rate,
     get_cargo,
-    get_rate,
-    get_rate_by_cargo_id
+    get_rate_by_cargo_id,
+    create_object_from_dict
 )
 
 app = FastAPI()
 
 
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content={"detail": "The json data is incorrect"}
+    )
+
 
 @app.post("/tariff")
-async def tariff_upload(tariff: dict):
-    try:
-        for key, values in tariff.items():
-            for value in values:
-                try:
-                    cargo = await get_cargo(value["cargo_type"])
-                except DoesNotExist:
-                    cargoIn = CargoIn_Pydantic(cargo_type=value["cargo_type"])
-                    cargo = await create_cargo(cargo=cargoIn)
-                try:
-                    rate = await get_rate(date=key, rate=value["rate"])
-                except DoesNotExist:
-                    rate = RateIn_Pydantic(date=key, rate=value["rate"])
-                    await create_rate(rate=rate, cargo_id=cargo.id)
-    except (TypeError, KeyError, ParseError):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="The json data is incorrect"
-        )
+async def tariff_upload(tariff: Tariff):
+    tariff = json.loads(tariff.json())
+    await create_object_from_dict(tariff=tariff)
             
     return tariff
 
@@ -54,25 +44,7 @@ async def tariff_file_upload(file: UploadFile = File()):
     contents = await file.read()
     contents = contents.decode("utf-8")
     tariff = json.loads(contents) 
-
-    try:
-        for key, values in tariff.items():
-            for value in values:
-                try:
-                    cargo = await get_cargo(value["cargo_type"])
-                except DoesNotExist:
-                    cargoIn = CargoIn_Pydantic(cargo_type=value["cargo_type"])
-                    cargo = await create_cargo(cargo=cargoIn)
-                try:
-                    rate = await get_rate(date=key, rate=value["rate"])
-                except DoesNotExist:
-                    rate = RateIn_Pydantic(date=key, rate=value["rate"])
-                    await create_rate(rate=rate, cargo_id=cargo.id)
-    except (TypeError, KeyError, ParseError):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="The data in the json file is incorrect"
-        )
+    await create_object_from_dict(tariff=tariff)
 
     return tariff
 
@@ -91,7 +63,6 @@ async def get_cost_of_insurance(declared_cost: float, cargo_type: str, date: dat
     cost_of_insurance = rate.rate * declared_cost
 
     return {"cost_of_insurance": cost_of_insurance}
-
 
 
 register_tortoise(
